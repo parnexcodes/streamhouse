@@ -3,8 +3,10 @@ package streamhouse
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/goccy/go-yaml"
@@ -192,7 +194,22 @@ func LoadConfigFromEnv() *Config {
 
 	// Redis configuration
 	if host := os.Getenv("STREAMHOUSE_REDIS_HOST"); host != "" {
-		config.Redis.Host = host
+		// Check if host contains port
+		if h, p, err := net.SplitHostPort(host); err == nil {
+			config.Redis.Host = h
+			if port, err := strconv.Atoi(p); err == nil {
+				config.Redis.Port = port
+			}
+		} else {
+			// No port specified, use host as-is
+			config.Redis.Host = host
+		}
+	}
+	// Allow separate port configuration to override
+	if port := os.Getenv("STREAMHOUSE_REDIS_PORT"); port != "" {
+		if p, err := strconv.Atoi(port); err == nil {
+			config.Redis.Port = p
+		}
 	}
 	if password := os.Getenv("STREAMHOUSE_REDIS_PASSWORD"); password != "" {
 		config.Redis.Password = password
@@ -200,7 +217,22 @@ func LoadConfigFromEnv() *Config {
 
 	// ClickHouse configuration
 	if host := os.Getenv("STREAMHOUSE_CLICKHOUSE_HOST"); host != "" {
-		config.ClickHouse.Host = host
+		// Check if host contains port
+		if h, p, err := net.SplitHostPort(host); err == nil {
+			config.ClickHouse.Host = h
+			if port, err := strconv.Atoi(p); err == nil {
+				config.ClickHouse.Port = port
+			}
+		} else {
+			// No port specified, use host as-is
+			config.ClickHouse.Host = host
+		}
+	}
+	// Allow separate port configuration to override
+	if port := os.Getenv("STREAMHOUSE_CLICKHOUSE_PORT"); port != "" {
+		if p, err := strconv.Atoi(port); err == nil {
+			config.ClickHouse.Port = p
+		}
 	}
 	if database := os.Getenv("STREAMHOUSE_CLICKHOUSE_DATABASE"); database != "" {
 		config.ClickHouse.Database = database

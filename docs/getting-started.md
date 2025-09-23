@@ -129,15 +129,20 @@ client.Data("user.activity").
 You can configure StreamHouse using environment variables:
 
 ```bash
-export REDIS_ADDR="localhost:6379"
-export REDIS_PASSWORD=""
-export CLICKHOUSE_HOST="localhost"
-export CLICKHOUSE_PORT="9000"
-export CLICKHOUSE_DATABASE="analytics"
-export STREAM_NAME="events"
-export BATCH_SIZE="100"
-export FLUSH_INTERVAL="5s"
-export CONSUMER_WORKERS="4"
+# Redis Configuration - supports host:port format or separate host/port
+export STREAMHOUSE_REDIS_HOST="localhost:6379"  # or just "localhost"
+export STREAMHOUSE_REDIS_PORT="6379"            # optional if port in host
+export STREAMHOUSE_REDIS_PASSWORD=""
+
+# ClickHouse Configuration - supports host:port format or separate host/port  
+export STREAMHOUSE_CLICKHOUSE_HOST="localhost:9000"  # or just "localhost"
+export STREAMHOUSE_CLICKHOUSE_PORT="9000"            # optional if port in host
+export STREAMHOUSE_CLICKHOUSE_DATABASE="analytics"
+export STREAMHOUSE_CLICKHOUSE_USERNAME="default"
+export STREAMHOUSE_CLICKHOUSE_PASSWORD=""
+
+# StreamHouse Configuration
+export STREAMHOUSE_STREAM_NAME="events"
 ```
 
 ### Configuration File

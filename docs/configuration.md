@@ -112,49 +112,28 @@ if err != nil {
 
 Set environment variables to override configuration:
 
-```bash
-# Redis Configuration
-export REDIS_ADDR="localhost:6379"
-export REDIS_PASSWORD=""
-export REDIS_DB="0"
-export REDIS_POOL_SIZE="10"
-export REDIS_MIN_IDLE_CONNS="5"
-export REDIS_MAX_RETRIES="3"
-export REDIS_DIAL_TIMEOUT="5s"
-export REDIS_READ_TIMEOUT="3s"
-export REDIS_WRITE_TIMEOUT="3s"
 
-# ClickHouse Configuration
-export CLICKHOUSE_HOST="localhost"
-export CLICKHOUSE_PORT="9000"
-export CLICKHOUSE_DATABASE="analytics"
-export CLICKHOUSE_USERNAME="default"
-export CLICKHOUSE_PASSWORD=""
+# Redis Configuration - supports host:port format or separate host/port
+export STREAMHOUSE_REDIS_HOST="localhost:6379"     # Can include port
+export STREAMHOUSE_REDIS_PORT="6379"               # Optional if port in host
+export STREAMHOUSE_REDIS_PASSWORD=""
+
+# ClickHouse Configuration - supports host:port format or separate host/port
+export STREAMHOUSE_CLICKHOUSE_HOST="localhost:9000"  # Can include port
+export STREAMHOUSE_CLICKHOUSE_PORT="9000"            # Optional if port in host
+export STREAMHOUSE_CLICKHOUSE_DATABASE="analytics"
+export STREAMHOUSE_CLICKHOUSE_USERNAME="default"
+export STREAMHOUSE_CLICKHOUSE_PASSWORD=""
 
 # StreamHouse Configuration
-export STREAM_NAME="events"
-export BATCH_SIZE="100"
-export FLUSH_INTERVAL="5s"
-export CONSUMER_WORKERS="4"
-
-# Consumer Configuration
-export CONSUMER_GROUP_NAME="streamhouse-consumers"
-export CONSUMER_NAME="consumer-1"
-export CONSUMER_DEAD_LETTER_QUEUE="true"
-export CONSUMER_DEAD_LETTER_TTL="24h"
-export CONSUMER_CLAIM_INTERVAL="30s"
-
-# Monitoring Configuration
-export MONITORING_ENABLED="true"
-export MONITORING_METRICS_INTERVAL="30s"
-export MONITORING_HEALTH_CHECK="true"
-export MONITORING_HEALTH_INTERVAL="10s"
-
-# Logging Configuration
-export LOGGING_LEVEL="info"
-export LOGGING_FORMAT="json"
-export LOGGING_OUTPUT="stdout"
+export STREAMHOUSE_STREAM_NAME="events"
 ```
+
+**Note**: The `STREAMHOUSE_REDIS_HOST` and `STREAMHOUSE_CLICKHOUSE_HOST` environment variables support both formats:
+- `host:port` format (e.g., `localhost:6379`) - port will be automatically parsed
+- `host` only format (e.g., `localhost`) - uses default or separately configured port
+
+If both host:port format and separate port variables are provided, the separate port variable takes precedence.
 
 ## Configuration Reference
 
