@@ -1,11 +1,11 @@
-# StreamHouse
+# streamhouse
 
 [![Go Version](https://img.shields.io/badge/go-%3E%3D1.21-blue.svg)](https://golang.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 A powerful Go package for schema-driven data streaming and analytics with Redis Streams and ClickHouse backend. StreamHouse provides a flexible schema system for reliable data streaming, real-time analytics, event processing, and high-performance data ingestion.
 
-## 🚀 Features
+## Features
 
 - **Schema-Driven Architecture**: Flexible schema system with field validation and type safety
 - **Dual Storage Backend**: Redis Streams for reliable queuing + ClickHouse for analytics
@@ -17,13 +17,13 @@ A powerful Go package for schema-driven data streaming and analytics with Redis 
 - **Health Monitoring**: Built-in health checks and connection monitoring
 - **Production Ready**: Connection pooling, graceful shutdown, and resource management
 
-## 📦 Installation
+## Installation
 
 ```bash
 go get github.com/parnexcodes/streamhouse
 ```
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
@@ -44,7 +44,7 @@ go get github.com/parnexcodes/streamhouse
                                               └─────────────────┘
 ```
 
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. Basic Setup
 
@@ -119,7 +119,6 @@ func main() {
     }
 }
 ```
-```
 
 ### 2. Schema Definition
 
@@ -162,9 +161,8 @@ sensorSchema := &streamhouse.DataSchema{
     },
 }
 ```
-```
 
-## 🎯 Use Cases & Examples
+## Use Cases & Examples
 
 ### User Activity Tracking
 
@@ -213,7 +211,6 @@ err = client.Data("analytics.purchase").
     }).
     Stream()
 ```
-```
 
 ### IoT Data Streaming
 
@@ -244,7 +241,7 @@ for i := 0; i < 100; i++ {
 err = events.StreamAll()
 ```
 
-## 🔧 Configuration
+## Configuration
 
 ### Consumer Configuration
 
@@ -267,7 +264,6 @@ err = consumer.Start(ctx)
 if err != nil {
     log.Fatal(err)
 }
-```
 ```
 
 ### Schema Validation
@@ -294,7 +290,7 @@ schema := &streamhouse.DataSchema{
 }
 ```
 
-## 📊 Health Monitoring
+## Health Monitoring
 
 ### Health Checks
 
@@ -311,7 +307,7 @@ if !client.IsConnected() {
 }
 ```
 
-## 🔄 Data Flow
+## Data Flow
 
 1. **Schema Registration**: Define data structure and validation rules
 2. **Event Creation**: Use builder pattern to construct events
@@ -320,7 +316,7 @@ if !client.IsConnected() {
 5. **Background Processing**: Consumer workers process events in batches
 6. **ClickHouse Storage**: Validated data inserted into ClickHouse tables
 7. **Analytics**: Query ClickHouse for real-time analytics and reporting
-## 🛠️ Field Types
+## Field Types
 
 | Type | ClickHouse Type | Description | Example |
 |------|----------------|-------------|---------|
@@ -331,7 +327,7 @@ if !client.IsConnected() {
 | `datetime` | DateTime | Timestamps | `time.Now()` |
 | `json` | String | JSON objects | `{"key": "value"}` |
 
-## 🔧 Configuration Options
+## Configuration Options
 
 ### Redis Configuration
 
@@ -360,9 +356,8 @@ ClickHouseConfig{
     Password: "",                    // Password
 }
 ```
-```
 
-## 🧪 Testing
+## Testing
 
 ```go
 // Create test client
@@ -388,9 +383,8 @@ if err != nil {
     t.Fatal(err)
 }
 ```
-```
 
-## 🚀 Production Deployment
+## Production Deployment
 
 ### Docker Compose Example
 
@@ -467,7 +461,7 @@ spec:
             cpu: "500m"
 ```
 
-## 🤝 Contributing
+## Contributing
 
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/amazing-feature`)
@@ -475,17 +469,17 @@ spec:
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - [Redis Streams](https://redis.io/topics/streams-intro) for reliable message queuing
 - [ClickHouse](https://clickhouse.com/) for high-performance analytics
 - [Prisma](https://www.prisma.io/) for schema design inspiration
 
-## 📚 Additional Resources
+## Additional Resources
 
 - [Getting Started Guide](docs/getting-started.md)
 - [Schema Reference](docs/schema-reference.md)
@@ -494,5 +488,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - [API Reference](https://pkg.go.dev/github.com/parnexcodes/streamhouse)
 
 ---
-
-**StreamHouse** - Stream your data with confidence 🚀
