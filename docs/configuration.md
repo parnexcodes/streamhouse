@@ -112,7 +112,7 @@ if err != nil {
 
 Set environment variables to override configuration:
 
-
+```bash
 # Redis Configuration - supports host:port format or separate host/port
 export STREAMHOUSE_REDIS_HOST="localhost:6379"     # Can include port
 export STREAMHOUSE_REDIS_PORT="6379"               # Optional if port in host
@@ -128,6 +128,7 @@ export STREAMHOUSE_CLICKHOUSE_PASSWORD=""
 # StreamHouse Configuration
 export STREAMHOUSE_STREAM_NAME="events"
 ```
+
 
 **Note**: The `STREAMHOUSE_REDIS_HOST` and `STREAMHOUSE_CLICKHOUSE_HOST` environment variables support both formats:
 - `host:port` format (e.g., `localhost:6379`) - port will be automatically parsed
