@@ -60,91 +60,89 @@ func NewClickHouseClient(config ClickHouseConfig) (*ClickHouseClient, error) {
 
 // TableSchema represents a ClickHouse table schema
 type TableSchema struct {
-	Name       string
-	Fields     map[string]FieldDefinition
-	Engine     string
-	OrderBy    []string
+	Name        string
+	Fields      map[string]FieldDefinition
+	Engine      string
+	OrderBy     []string
 	PartitionBy string
-	TTL        *time.Duration
-	Settings   map[string]interface{}
+	TTL         *time.Duration
+	Settings    map[string]interface{}
 }
 
 // FieldDefinition represents a field in a ClickHouse table
 type FieldDefinition struct {
-	Type        string
-	Nullable    bool
-	Default     interface{}
-	Codec       string
-	Comment     string
+	Type     string
+	Nullable bool
+	Default  interface{}
+	Codec    string
+	Comment  string
 }
 
 // CreateTable creates a table based on the schema
 func (c *ClickHouseClient) CreateTable(schema TableSchema) error {
 	query := c.buildCreateTableQuery(schema)
-	
+
 	if err := c.conn.Exec(c.ctx, query); err != nil {
 		return fmt.Errorf("failed to create table %s: %w", schema.Name, err)
 	}
-	
+
 	return nil
 }
 
 // buildCreateTableQuery builds the CREATE TABLE query
 func (c *ClickHouseClient) buildCreateTableQuery(schema TableSchema) string {
 	var parts []string
-	
+
 	// Start with CREATE TABLE
 	parts = append(parts, fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (", schema.Name))
-	
+
 	// Add fields
 	var fieldDefs []string
 	for name, field := range schema.Fields {
-		fieldDef := fmt.Sprintf("    %s %s", name, field.Type)
-		
-		if field.Nullable {
-			fieldDef += " Nullable(" + field.Type + ")"
-		}
-		
+		// For now, use base types without Nullable to avoid syntax issues
+		fieldDef := fmt.Sprintf("    `%s` %s", name, field.Type)
+
 		if field.Default != nil {
 			fieldDef += fmt.Sprintf(" DEFAULT %v", field.Default)
 		}
-		
+
 		if field.Codec != "" {
 			fieldDef += fmt.Sprintf(" CODEC(%s)", field.Codec)
 		}
-		
-		if field.Comment != "" {
-			fieldDef += fmt.Sprintf(" COMMENT '%s'", field.Comment)
-		}
-		
+
+		// Temporarily remove COMMENT to avoid syntax issues
+		// if field.Comment != "" {
+		//	fieldDef += fmt.Sprintf(" COMMENT '%s'", field.Comment)
+		// }
+
 		fieldDefs = append(fieldDefs, fieldDef)
 	}
-	
+
 	parts = append(parts, strings.Join(fieldDefs, ",\n"))
 	parts = append(parts, ")")
-	
+
 	// Add engine
 	engine := schema.Engine
 	if engine == "" {
 		engine = "MergeTree()"
 	}
 	parts = append(parts, fmt.Sprintf("ENGINE = %s", engine))
-	
+
 	// Add ORDER BY
 	if len(schema.OrderBy) > 0 {
 		parts = append(parts, fmt.Sprintf("ORDER BY (%s)", strings.Join(schema.OrderBy, ", ")))
 	}
-	
+
 	// Add PARTITION BY
 	if schema.PartitionBy != "" {
 		parts = append(parts, fmt.Sprintf("PARTITION BY %s", schema.PartitionBy))
 	}
-	
+
 	// Add TTL
 	if schema.TTL != nil {
 		parts = append(parts, fmt.Sprintf("TTL timestamp + INTERVAL %d SECOND", int(schema.TTL.Seconds())))
 	}
-	
+
 	// Add settings
 	if len(schema.Settings) > 0 {
 		var settings []string
@@ -153,7 +151,7 @@ func (c *ClickHouseClient) buildCreateTableQuery(schema TableSchema) string {
 		}
 		parts = append(parts, fmt.Sprintf("SETTINGS %s", strings.Join(settings, ", ")))
 	}
-	
+
 	return strings.Join(parts, "\n")
 }
 
@@ -162,38 +160,38 @@ func (c *ClickHouseClient) InsertData(tableName string, data []map[string]interf
 	if len(data) == 0 {
 		return nil
 	}
-	
+
 	// Get column names from the first row
 	var columns []string
 	for col := range data[0] {
 		columns = append(columns, col)
 	}
-	
+
 	// Build INSERT query
 	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES", tableName, strings.Join(columns, ", "))
-	
+
 	batch, err := c.conn.PrepareBatch(c.ctx, query)
 	if err != nil {
 		return fmt.Errorf("failed to prepare batch: %w", err)
 	}
-	
+
 	// Add rows to batch
 	for _, row := range data {
 		var values []interface{}
 		for _, col := range columns {
 			values = append(values, row[col])
 		}
-		
+
 		if err := batch.Append(values...); err != nil {
 			return fmt.Errorf("failed to append row to batch: %w", err)
 		}
 	}
-	
+
 	// Execute batch
 	if err := batch.Send(); err != nil {
 		return fmt.Errorf("failed to send batch: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -202,27 +200,27 @@ func (c *ClickHouseClient) InsertDataWithColumns(tableName string, columns []str
 	if len(data) == 0 {
 		return nil
 	}
-	
+
 	// Build INSERT query
 	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES", tableName, strings.Join(columns, ", "))
-	
+
 	batch, err := c.conn.PrepareBatch(c.ctx, query)
 	if err != nil {
 		return fmt.Errorf("failed to prepare batch: %w", err)
 	}
-	
+
 	// Add rows to batch
 	for _, row := range data {
 		if err := batch.Append(row...); err != nil {
 			return fmt.Errorf("failed to append row to batch: %w", err)
 		}
 	}
-	
+
 	// Execute batch
 	if err := batch.Send(); err != nil {
 		return fmt.Errorf("failed to send batch: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -233,10 +231,10 @@ func (c *ClickHouseClient) Query(query string, args ...interface{}) ([]map[strin
 		return nil, fmt.Errorf("failed to execute query: %w", err)
 	}
 	defer rows.Close()
-	
+
 	// Get column names
 	columns := rows.Columns()
-	
+
 	var results []map[string]interface{}
 	for rows.Next() {
 		// Create slice to hold column values
@@ -245,25 +243,25 @@ func (c *ClickHouseClient) Query(query string, args ...interface{}) ([]map[strin
 		for i := range values {
 			valuePtrs[i] = &values[i]
 		}
-		
+
 		// Scan row
 		if err := rows.Scan(valuePtrs...); err != nil {
 			return nil, fmt.Errorf("failed to scan row: %w", err)
 		}
-		
+
 		// Create result map
 		result := make(map[string]interface{})
 		for i, col := range columns {
 			result[col] = values[i]
 		}
-		
+
 		results = append(results, result)
 	}
-	
+
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating rows: %w", err)
 	}
-	
+
 	return results, nil
 }
 
@@ -273,11 +271,11 @@ func (c *ClickHouseClient) QueryRow(query string, args ...interface{}) (map[stri
 	if err != nil {
 		return nil, err
 	}
-	
+
 	if len(results) == 0 {
 		return nil, sql.ErrNoRows
 	}
-	
+
 	return results[0], nil
 }
 
@@ -293,17 +291,17 @@ func (c *ClickHouseClient) TableExists(tableName string) (bool, error) {
 		FROM system.tables 
 		WHERE database = ? AND name = ?
 	`
-	
+
 	result, err := c.QueryRow(query, c.config.Database, tableName)
 	if err != nil {
 		return false, fmt.Errorf("failed to check table existence: %w", err)
 	}
-	
+
 	count, ok := result["count"].(uint64)
 	if !ok {
 		return false, fmt.Errorf("unexpected result type for count")
 	}
-	
+
 	return count > 0, nil
 }
 
@@ -320,17 +318,17 @@ func (c *ClickHouseClient) GetTableSchema(tableName string) (*TableSchema, error
 		WHERE database = ? AND table = ?
 		ORDER BY position
 	`
-	
+
 	results, err := c.Query(query, c.config.Database, tableName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get table schema: %w", err)
 	}
-	
+
 	schema := &TableSchema{
 		Name:   tableName,
 		Fields: make(map[string]FieldDefinition),
 	}
-	
+
 	for _, row := range results {
 		name := row["name"].(string)
 		fieldType := row["type"].(string)
@@ -338,13 +336,13 @@ func (c *ClickHouseClient) GetTableSchema(tableName string) (*TableSchema, error
 		if row["comment"] != nil {
 			comment = row["comment"].(string)
 		}
-		
+
 		schema.Fields[name] = FieldDefinition{
 			Type:    fieldType,
 			Comment: comment,
 		}
 	}
-	
+
 	return schema, nil
 }
 
@@ -377,7 +375,7 @@ func (c *ClickHouseClient) GetTableStats(tableName string) (map[string]interface
 		FROM system.parts 
 		WHERE database = ? AND table = ? AND active = 1
 	`
-	
+
 	return c.QueryRow(query, c.config.Database, tableName)
 }
 
@@ -386,7 +384,7 @@ func (c *ClickHouseClient) CreateIndex(tableName, indexName string, columns []st
 	if indexType == "" {
 		indexType = "minmax"
 	}
-	
+
 	query := fmt.Sprintf(
 		"ALTER TABLE %s ADD INDEX %s (%s) TYPE %s GRANULARITY 1",
 		tableName,
@@ -394,7 +392,7 @@ func (c *ClickHouseClient) CreateIndex(tableName, indexName string, columns []st
 		strings.Join(columns, ", "),
 		indexType,
 	)
-	
+
 	return c.conn.Exec(c.ctx, query)
 }
 
@@ -416,7 +414,7 @@ func (c *ClickHouseClient) GetDatabaseInfo() (map[string]interface{}, error) {
 		WHERE database = ?
 		GROUP BY name, engine
 	`
-	
+
 	return c.QueryRow(query, c.config.Database)
 }
 
@@ -433,7 +431,7 @@ func (c *ClickHouseClient) Close() error {
 // ConvertGoTypeToClickHouse converts Go types to ClickHouse types
 func ConvertGoTypeToClickHouse(goType reflect.Type, nullable bool) string {
 	var clickHouseType string
-	
+
 	switch goType.Kind() {
 	case reflect.String:
 		clickHouseType = "String"
@@ -475,11 +473,11 @@ func ConvertGoTypeToClickHouse(goType reflect.Type, nullable bool) string {
 			clickHouseType = "String" // fallback
 		}
 	}
-	
+
 	if nullable {
 		clickHouseType = fmt.Sprintf("Nullable(%s)", clickHouseType)
 	}
-	
+
 	return clickHouseType
 }
 
@@ -496,12 +494,12 @@ type BatchInsert struct {
 // NewBatchInsert creates a new batch insert helper
 func (c *ClickHouseClient) NewBatchInsert(tableName string, columns []string, batchSize int) (*BatchInsert, error) {
 	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES", tableName, strings.Join(columns, ", "))
-	
+
 	batch, err := c.conn.PrepareBatch(c.ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to prepare batch: %w", err)
 	}
-	
+
 	return &BatchInsert{
 		client:    c,
 		tableName: tableName,
@@ -517,14 +515,14 @@ func (bi *BatchInsert) Add(values ...interface{}) error {
 	if err := bi.batch.Append(values...); err != nil {
 		return fmt.Errorf("failed to append to batch: %w", err)
 	}
-	
+
 	bi.count++
-	
+
 	// Auto-flush if batch size is reached
 	if bi.count >= bi.batchSize {
 		return bi.Flush()
 	}
-	
+
 	return nil
 }
 
@@ -542,21 +540,21 @@ func (bi *BatchInsert) Flush() error {
 	if bi.count == 0 {
 		return nil
 	}
-	
+
 	if err := bi.batch.Send(); err != nil {
 		return fmt.Errorf("failed to send batch: %w", err)
 	}
-	
+
 	// Prepare new batch
 	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES", bi.tableName, strings.Join(bi.columns, ", "))
 	batch, err := bi.client.conn.PrepareBatch(bi.client.ctx, query)
 	if err != nil {
 		return fmt.Errorf("failed to prepare new batch: %w", err)
 	}
-	
+
 	bi.batch = batch
 	bi.count = 0
-	
+
 	return nil
 }
 

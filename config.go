@@ -43,19 +43,20 @@ type RedisConfig struct {
 
 // ClickHouseConfig holds ClickHouse connection configuration
 type ClickHouseConfig struct {
-	Host            string        `json:"host" yaml:"host"`
-	Port            int           `json:"port" yaml:"port"`
-	Database        string        `json:"database" yaml:"database"`
-	Username        string        `json:"username" yaml:"username"`
-	Password        string        `json:"password" yaml:"password"`
-	MaxOpenConns    int           `json:"max_open_conns" yaml:"max_open_conns"`
-	MaxIdleConns    int           `json:"max_idle_conns" yaml:"max_idle_conns"`
-	ConnMaxLifetime time.Duration `json:"conn_max_lifetime" yaml:"conn_max_lifetime"`
-	DialTimeout     time.Duration `json:"dial_timeout" yaml:"dial_timeout"`
-	ReadTimeout     time.Duration `json:"read_timeout" yaml:"read_timeout"`
-	WriteTimeout    time.Duration `json:"write_timeout" yaml:"write_timeout"`
-	Compression     bool          `json:"compression" yaml:"compression"`
-	TLS             *TLSConfig    `json:"tls,omitempty" yaml:"tls,omitempty"`
+	Host            string                 `json:"host" yaml:"host"`
+	Port            int                    `json:"port" yaml:"port"`
+	Database        string                 `json:"database" yaml:"database"`
+	Username        string                 `json:"username" yaml:"username"`
+	Password        string                 `json:"password" yaml:"password"`
+	Settings        map[string]interface{} `json:"settings" yaml:"settings"`
+	MaxOpenConns    int                    `json:"max_open_conns" yaml:"max_open_conns"`
+	MaxIdleConns    int                    `json:"max_idle_conns" yaml:"max_idle_conns"`
+	ConnMaxLifetime time.Duration          `json:"conn_max_lifetime" yaml:"conn_max_lifetime"`
+	DialTimeout     time.Duration          `json:"dial_timeout" yaml:"dial_timeout"`
+	ReadTimeout     time.Duration          `json:"read_timeout" yaml:"read_timeout"`
+	WriteTimeout    time.Duration          `json:"write_timeout" yaml:"write_timeout"`
+	Compression     bool                   `json:"compression" yaml:"compression"`
+	TLS             *TLSConfig             `json:"tls,omitempty" yaml:"tls,omitempty"`
 }
 
 // ConsumerConfig holds consumer-specific configuration

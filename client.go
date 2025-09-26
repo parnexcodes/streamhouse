@@ -2,12 +2,15 @@ package streamhouse
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/google/uuid"
+	"github.com/parnexcodes/streamhouse/storage"
+	"github.com/redis/go-redis/v9"
 )
 
 // StreamHouseClient implements the Client interface
@@ -18,14 +21,14 @@ type StreamHouseClient struct {
 	schemaRegistry *SchemaRegistry
 	consumer       *Consumer
 	metrics        *Metrics
-	
+
 	// Internal state
-	ctx        context.Context
-	cancel     context.CancelFunc
-	wg         sync.WaitGroup
-	mu         sync.RWMutex
-	closed     bool
-	
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+	mu     sync.RWMutex
+	closed bool
+
 	// Channels for async processing
 	eventChan chan *StreamEvent
 }
@@ -35,6 +38,7 @@ type ClickHouseConnection interface {
 	Connect(config ClickHouseConfig) error
 	CreateTable(schema *DataSchema, tableName string) error
 	InsertBatch(tableName string, events []*StreamEvent) error
+	InsertData(tableName string, data []map[string]interface{}) error
 	Query(query string, args ...interface{}) (interface{}, error)
 	Close() error
 	Health() error
@@ -89,15 +93,15 @@ func NewClient(config *Config) (*StreamHouseClient, error) {
 // initRedis initializes the Redis connection
 func (c *StreamHouseClient) initRedis() error {
 	opts := &redis.Options{
-		Addr:         c.config.RedisAddr(),
-		Password:     c.config.Redis.Password,
-		DB:           c.config.Redis.DB,
-		PoolSize:     c.config.Redis.PoolSize,
-		MinIdleConns: c.config.Redis.MinIdleConns,
-		MaxRetries:   c.config.Redis.MaxRetries,
-		DialTimeout:  c.config.Redis.DialTimeout,
-		ReadTimeout:  c.config.Redis.ReadTimeout,
-		WriteTimeout: c.config.Redis.WriteTimeout,
+		Addr:            c.config.RedisAddr(),
+		Password:        c.config.Redis.Password,
+		DB:              c.config.Redis.DB,
+		PoolSize:        c.config.Redis.PoolSize,
+		MinIdleConns:    c.config.Redis.MinIdleConns,
+		MaxRetries:      c.config.Redis.MaxRetries,
+		DialTimeout:     c.config.Redis.DialTimeout,
+		ReadTimeout:     c.config.Redis.ReadTimeout,
+		WriteTimeout:    c.config.Redis.WriteTimeout,
 		ConnMaxIdleTime: c.config.Redis.IdleTimeout,
 	}
 
@@ -122,10 +126,20 @@ func (c *StreamHouseClient) initRedis() error {
 
 // initClickHouse initializes the ClickHouse connection
 func (c *StreamHouseClient) initClickHouse() error {
-	// This would be implemented with actual ClickHouse driver
-	// For now, we'll use a placeholder
-	c.clickHouseConn = &MockClickHouseConnection{}
-	return c.clickHouseConn.Connect(c.config.ClickHouse)
+	adapter, err := storage.NewClickHouseAdapter(storage.ClickHouseConfig{
+		Host:     c.config.ClickHouse.Host,
+		Port:     c.config.ClickHouse.Port,
+		Database: c.config.ClickHouse.Database,
+		Username: c.config.ClickHouse.Username,
+		Password: c.config.ClickHouse.Password,
+		Settings: c.config.ClickHouse.Settings,
+	})
+	if err != nil {
+		return err
+	}
+
+	c.clickHouseConn = newClickHouseAdapterWrapper(adapter)
+	return nil
 }
 
 // RegisterSchema registers a new data schema
@@ -161,17 +175,31 @@ func (c *StreamHouseClient) Stream(dataType string, data map[string]interface{})
 		return ErrClientClosed
 	}
 
+	// Add required fields to data before validation
+	eventID := uuid.New().String()
+	eventTimestamp := time.Now()
+
+	// Create a copy of data to avoid modifying the original
+	eventData := make(map[string]interface{})
+	for k, v := range data {
+		eventData[k] = v
+	}
+
+	// Add required fields
+	eventData["id"] = eventID
+	eventData["timestamp"] = eventTimestamp
+
 	// Validate data against schema
-	if err := c.schemaRegistry.ValidateData(dataType, data); err != nil {
+	if err := c.schemaRegistry.ValidateData(dataType, eventData); err != nil {
 		return err
 	}
 
 	// Create stream event
 	event := &StreamEvent{
-		ID:        uuid.New().String(),
+		ID:        eventID,
 		Schema:    dataType,
-		Data:      data,
-		Timestamp: time.Now(),
+		Data:      eventData,
+		Timestamp: eventTimestamp,
 		Metadata:  make(map[string]interface{}),
 	}
 
@@ -205,18 +233,32 @@ func (c *StreamHouseClient) StreamAsync(dataType string, data map[string]interfa
 		return
 	}
 
+	// Add required fields to data before validation
+	eventID := uuid.New().String()
+	eventTimestamp := time.Now()
+
+	// Create a copy of data to avoid modifying the original
+	eventData := make(map[string]interface{})
+	for k, v := range data {
+		eventData[k] = v
+	}
+
+	// Add required fields
+	eventData["id"] = eventID
+	eventData["timestamp"] = eventTimestamp
+
 	// Validate data against schema
-	if err := c.schemaRegistry.ValidateData(dataType, data); err != nil {
+	if err := c.schemaRegistry.ValidateData(dataType, eventData); err != nil {
 		c.metrics.EventsFailed++
 		return
 	}
 
 	// Create stream event
 	event := &StreamEvent{
-		ID:        uuid.New().String(),
+		ID:        eventID,
 		Schema:    dataType,
-		Data:      data,
-		Timestamp: time.Now(),
+		Data:      eventData,
+		Timestamp: eventTimestamp,
 		Metadata:  make(map[string]interface{}),
 	}
 
@@ -403,26 +445,58 @@ func (c *StreamHouseClient) getStreamKey(schemaName string) string {
 }
 
 func (c *StreamHouseClient) getTableName(schemaName string) string {
-	return fmt.Sprintf("streamhouse_%s", schemaName)
+	// Replace dots and dashes with underscores for ClickHouse table names
+	return fmt.Sprintf("streamhouse_%s",
+		strings.ReplaceAll(strings.ReplaceAll(schemaName, ".", "_"), "-", "_"))
 }
 
 func (c *StreamHouseClient) eventToRedisFields(event *StreamEvent) map[string]interface{} {
 	fields := make(map[string]interface{})
 	fields["id"] = event.ID
-	fields["schema"] = event.Schema
+	fields["data_type"] = event.Schema
 	fields["timestamp"] = event.Timestamp.Unix()
 
-	// Add data fields
-	for k, v := range event.Data {
-		fields[k] = v
+	// Store data as JSON string (expected by parseMessage)
+	if dataJSON, err := json.Marshal(event.Data); err == nil {
+		fields["data"] = string(dataJSON)
+	} else {
+		fields["data"] = "{}"
 	}
 
-	// Add metadata fields
-	for k, v := range event.Metadata {
-		fields[fmt.Sprintf("meta_%s", k)] = v
+	// Store metadata as JSON string (expected by parseMessage)
+	if len(event.Metadata) > 0 {
+		if metadataJSON, err := json.Marshal(event.Metadata); err == nil {
+			fields["metadata"] = string(metadataJSON)
+		} else {
+			fields["metadata"] = "{}"
+		}
+	} else {
+		fields["metadata"] = "{}"
 	}
 
 	return fields
+}
+
+// serializeValue converts complex types to Redis-compatible strings
+func (c *StreamHouseClient) serializeValue(value interface{}) interface{} {
+	if value == nil {
+		return ""
+	}
+
+	switch v := value.(type) {
+	case string, int, int64, float64, bool:
+		// Simple types can be used directly
+		return v
+	case map[string]interface{}, []interface{}:
+		// Complex types need to be serialized to JSON
+		if jsonBytes, err := json.Marshal(v); err == nil {
+			return string(jsonBytes)
+		}
+		return fmt.Sprintf("%v", v)
+	default:
+		// Fallback to string representation
+		return fmt.Sprintf("%v", v)
+	}
 }
 
 // MockClickHouseConnection is a placeholder implementation

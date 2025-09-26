@@ -1,0 +1,88 @@
+# StreamHouse Audit Logging Configuration
+# This configuration file contains settings for Redis Streams and ClickHouse
+
+# Redis configuration for message streaming
+redis:
+  host: "localhost"
+  port: 6379
+  password: ""  # Leave empty if no password is set
+  db: 0
+  pool_size: 10
+  min_idle_conns: 5
+  max_retries: 3
+  dial_timeout: 5s
+  read_timeout: 3s
+  write_timeout: 3s
+  idle_timeout: 300s
+
+# ClickHouse configuration for data storage
+clickhouse:
+  host: "localhost"
+  port: 9000
+  database: "audit_logs"
+  username: "admin"
+  password: "12345"  # Leave empty if no password is set
+  max_open_conns: 10
+  max_idle_conns: 5
+  conn_max_lifetime: 300s
+  dial_timeout: 10s
+  read_timeout: 30s
+  write_timeout: 30s
+  compression: true
+
+# Stream configuration
+stream_name: "audit_events"
+batch_size: 100
+flush_interval: 5s
+workers: 2
+
+# Consumer configuration
+consumer:
+  group_name: "audit_processors"
+  consumer_name: "audit_consumer_1"
+  block_time: 1s
+  count: 10
+  no_ack: false
+  retry_attempts: 3
+  retry_delay: 1s
+  dead_letter_queue: true
+  dead_letter_ttl: 24h
+  claim_interval: 30s
+
+# Monitoring configuration
+monitoring:
+  enabled: true
+  metrics_interval: 30s
+  health_check: true
+  health_interval: 10s
+
+# Logging configuration
+logging:
+  level: "info"  # debug, info, warn, error
+  format: "text"  # text or json
+  output: "stdout"  # stdout, stderr, or file path
+
+# Example environment-specific overrides:
+# For production, you might want to:
+# - Use stronger passwords and authentication
+# - Enable TLS for both Redis and ClickHouse
+# - Increase batch sizes and worker counts
+# - Set up proper monitoring and alerting
+# - Use dedicated databases and users
+
+# TLS configuration (uncomment and configure for production)
+# redis:
+#   tls:
+#     enabled: true
+#     cert_file: "/path/to/redis-client.crt"
+#     key_file: "/path/to/redis-client.key"
+#     ca_file: "/path/to/ca.crt"
+#     insecure_skip_verify: false
+#
+# clickhouse:
+#   tls:
+#     enabled: true
+#     cert_file: "/path/to/clickhouse-client.crt"
+#     key_file: "/path/to/clickhouse-client.key"
+#     ca_file: "/path/to/ca.crt"
+#     insecure_skip_verify: false

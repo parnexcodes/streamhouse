@@ -46,7 +46,7 @@ func (db *DataBuilder) WithIP(ip string) *DataBuilder {
 	// Validate IP address
 	if parsedIP := net.ParseIP(ip); parsedIP != nil {
 		db.data["ip_address"] = ip
-		
+
 		// Add IP type metadata
 		if parsedIP.To4() != nil {
 			db.metadata["ip_type"] = "ipv4"
@@ -195,9 +195,9 @@ func (db *DataBuilder) WithPriority(priority string) *DataBuilder {
 func (db *DataBuilder) Stream() error {
 	// Add metadata to the event if not already present
 	if len(db.metadata) > 0 {
-		db.data["_metadata"] = db.metadata
+		db.data["metadata"] = db.metadata
 	}
-	
+
 	return db.client.Stream(db.dataType, db.data)
 }
 
@@ -205,26 +205,26 @@ func (db *DataBuilder) Stream() error {
 func (db *DataBuilder) StreamAsync() {
 	// Add metadata to the event if not already present
 	if len(db.metadata) > 0 {
-		db.data["_metadata"] = db.metadata
+		db.data["metadata"] = db.metadata
 	}
-	
+
 	db.client.StreamAsync(db.dataType, db.data)
 }
 
 // Build returns the built data without streaming
 func (db *DataBuilder) Build() map[string]interface{} {
 	result := make(map[string]interface{})
-	
+
 	// Copy data
 	for k, v := range db.data {
 		result[k] = v
 	}
-	
+
 	// Add metadata if present
 	if len(db.metadata) > 0 {
-		result["_metadata"] = db.metadata
+		result["metadata"] = db.metadata
 	}
-	
+
 	return result
 }
 
@@ -236,17 +236,17 @@ func (db *DataBuilder) Clone() *DataBuilder {
 		data:     make(map[string]interface{}),
 		metadata: make(map[string]interface{}),
 	}
-	
+
 	// Copy data
 	for k, v := range db.data {
 		newBuilder.data[k] = v
 	}
-	
+
 	// Copy metadata
 	for k, v := range db.metadata {
 		newBuilder.metadata[k] = v
 	}
-	
+
 	return newBuilder
 }
 
@@ -281,9 +281,9 @@ func (eb *EventBuilder) WithAuditTrail(actor, action, resource string) *EventBui
 // WithPerformanceMetrics adds performance metrics
 func (eb *EventBuilder) WithPerformanceMetrics(responseTime time.Duration, memoryUsage int64, cpuUsage float64) *EventBuilder {
 	metrics := map[string]interface{}{
-		"response_time_ms": responseTime.Milliseconds(),
+		"response_time_ms":   responseTime.Milliseconds(),
 		"memory_usage_bytes": memoryUsage,
-		"cpu_usage_percent": cpuUsage,
+		"cpu_usage_percent":  cpuUsage,
 	}
 	eb.WithField("performance_metrics", metrics)
 	return eb
@@ -300,7 +300,7 @@ func (eb *EventBuilder) WithSecurityContext(authMethod, permissions []string, ri
 	securityContext := map[string]interface{}{
 		"auth_method": authMethod,
 		"permissions": permissions,
-		"risk_score": riskScore,
+		"risk_score":  riskScore,
 	}
 	eb.WithField("security_context", securityContext)
 	return eb
@@ -310,9 +310,9 @@ func (eb *EventBuilder) WithSecurityContext(authMethod, permissions []string, ri
 func (eb *EventBuilder) WithDeviceInfo(deviceType, deviceID, platform, version string) *EventBuilder {
 	deviceInfo := map[string]interface{}{
 		"device_type": deviceType,
-		"device_id": deviceID,
-		"platform": platform,
-		"version": version,
+		"device_id":   deviceID,
+		"platform":    platform,
+		"version":     version,
 	}
 	eb.WithField("device_info", deviceInfo)
 	return eb

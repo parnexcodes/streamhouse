@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -16,6 +18,19 @@ type RedisStreamsClient struct {
 	ctx        context.Context
 }
 
+// InitWithClient initializes the RedisStreamsClient with an existing Redis client
+func (r *RedisStreamsClient) InitWithClient(client *redis.Client, streamName string, ctx context.Context) error {
+	if client == nil {
+		return fmt.Errorf("Redis client cannot be nil")
+	}
+
+	r.client = client
+	r.streamName = streamName
+	r.ctx = ctx
+
+	return nil
+}
+
 // NewRedisStreamsClient creates a new Redis Streams client
 func NewRedisStreamsClient(addr, password string, db int, streamName string) (*RedisStreamsClient, error) {
 	rdb := redis.NewClient(&redis.Options{
@@ -25,7 +40,7 @@ func NewRedisStreamsClient(addr, password string, db int, streamName string) (*R
 	})
 
 	ctx := context.Background()
-	
+
 	// Test connection
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
@@ -75,12 +90,19 @@ func (r *RedisStreamsClient) AddMessage(dataType string, data map[string]interfa
 		"timestamp": time.Now().Unix(),
 	}
 
-	// Serialize data as JSON
-	dataJSON, err := json.Marshal(message.Data)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal data: %w", err)
+	// Add data fields to the top level
+	for k, v := range message.Data {
+		// To avoid issues with type assertions later, we should marshal complex types
+		if _, ok := v.(string); !ok {
+			jsonVal, err := json.Marshal(v)
+			if err != nil {
+				return "", fmt.Errorf("failed to marshal field %s: %w", k, err)
+			}
+			fields[k] = string(jsonVal)
+		} else {
+			fields[k] = v
+		}
 	}
-	fields["data"] = string(dataJSON)
 
 	// Serialize metadata as JSON if present
 	if len(message.Metadata) > 0 {
@@ -170,10 +192,11 @@ func (r *RedisStreamsClient) ReadMessagesFromGroup(groupName, consumerName strin
 
 // CreateConsumerGroup creates a consumer group for the stream
 func (r *RedisStreamsClient) CreateConsumerGroup(groupName string) error {
-	result := r.client.XGroupCreate(r.ctx, r.streamName, groupName, "0")
+	result := r.client.XGroupCreateMkStream(r.ctx, r.streamName, groupName, "0")
 	if result.Err() != nil {
 		// Check if group already exists
-		if result.Err().Error() == "BUSYGROUP Consumer Group name already exists" {
+		errStr := result.Err().Error()
+		if strings.Contains(errStr, "BUSYGROUP") {
 			return nil // Group already exists, which is fine
 		}
 		return fmt.Errorf("failed to create consumer group: %w", result.Err())
@@ -199,6 +222,21 @@ func (r *RedisStreamsClient) GetPendingMessages(groupName string) (*redis.XPendi
 	return result.Val(), nil
 }
 
+// GetPendingMessagesDetailed gets detailed pending messages with IDs for a consumer group
+func (r *RedisStreamsClient) GetPendingMessagesDetailed(groupName string, count int64) ([]redis.XPendingExt, error) {
+	result := r.client.XPendingExt(r.ctx, &redis.XPendingExtArgs{
+		Stream: r.streamName,
+		Group:  groupName,
+		Start:  "-",
+		End:    "+",
+		Count:  count,
+	})
+	if result.Err() != nil {
+		return nil, fmt.Errorf("failed to get detailed pending messages: %w", result.Err())
+	}
+	return result.Val(), nil
+}
+
 // ClaimMessages claims messages that have been pending for too long
 func (r *RedisStreamsClient) ClaimMessages(groupName, consumerName string, minIdleTime time.Duration, messageIDs []string) ([]redis.XMessage, error) {
 	result := r.client.XClaim(r.ctx, &redis.XClaimArgs{
@@ -208,12 +246,28 @@ func (r *RedisStreamsClient) ClaimMessages(groupName, consumerName string, minId
 		MinIdle:  minIdleTime,
 		Messages: messageIDs,
 	})
-	
+
 	if result.Err() != nil {
 		return nil, fmt.Errorf("failed to claim messages: %w", result.Err())
 	}
-	
+
 	return result.Val(), nil
+}
+
+// ParseMessages converts a slice of redis.XMessage to a slice of StreamMessage
+func (r *RedisStreamsClient) ParseMessages(messages []redis.XMessage, dataType string) ([]StreamMessage, error) {
+	var streamMessages []StreamMessage
+	for _, msg := range messages {
+		streamMsg, err := r.parseMessage(msg)
+		if err != nil {
+			return nil, err
+		}
+		if streamMsg.DataType == "" {
+			streamMsg.DataType = dataType
+		}
+		streamMessages = append(streamMessages, streamMsg)
+	}
+	return streamMessages, nil
 }
 
 // TrimStream trims the stream to keep only recent messages
@@ -255,33 +309,183 @@ func (r *RedisStreamsClient) DeleteMessage(messageID string) error {
 // parseMessage parses a Redis message into a StreamMessage
 func (r *RedisStreamsClient) parseMessage(msg redis.XMessage) (StreamMessage, error) {
 	streamMsg := StreamMessage{
-		ID: msg.ID,
+		ID:   msg.ID,
+		Data: make(map[string]interface{}),
 	}
 
-	// Parse data type
-	if dataType, ok := msg.Values["data_type"].(string); ok {
-		streamMsg.DataType = dataType
-	}
+	for key, value := range msg.Values {
+		switch key {
+		case "data_type":
+			if dataType, ok := value.(string); ok {
+				streamMsg.DataType = dataType
+			}
 
-	// Parse data JSON
-	if dataJSON, ok := msg.Values["data"].(string); ok {
-		var data map[string]interface{}
-		if err := json.Unmarshal([]byte(dataJSON), &data); err != nil {
-			return streamMsg, fmt.Errorf("failed to unmarshal data: %w", err)
+		case "metadata":
+			metadataStr, ok := toStringValue(value)
+			if !ok || metadataStr == "" {
+				continue
+			}
+
+			var metadata map[string]interface{}
+			if err := json.Unmarshal([]byte(metadataStr), &metadata); err != nil {
+				return streamMsg, fmt.Errorf("failed to unmarshal metadata: %w", err)
+			}
+			streamMsg.Metadata = metadata
+
+		case "timestamp":
+			streamMsg.Data["timestamp"] = value
+
+		case "data":
+			if err := mergeDataField(streamMsg.Data, value); err != nil {
+				return streamMsg, err
+			}
+
+		default:
+			setParsedField(streamMsg.Data, key, value)
 		}
-		streamMsg.Data = data
 	}
 
-	// Parse metadata JSON if present
-	if metadataJSON, ok := msg.Values["metadata"].(string); ok {
-		var metadata map[string]interface{}
-		if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
-			return streamMsg, fmt.Errorf("failed to unmarshal metadata: %w", err)
-		}
-		streamMsg.Metadata = metadata
+	if ts, ok := streamMsg.Data["timestamp"]; ok {
+		streamMsg.Data["timestamp"] = normalizeTimestamp(ts)
 	}
 
 	return streamMsg, nil
+}
+
+func mergeDataField(target map[string]interface{}, raw interface{}) error {
+	switch v := raw.(type) {
+	case string:
+		if v == "" {
+			return nil
+		}
+
+		var parsed interface{}
+		if err := json.Unmarshal([]byte(v), &parsed); err != nil {
+			target["data"] = v
+			return nil
+		}
+		mergeParsedData(target, parsed)
+
+	case []byte:
+		return mergeDataField(target, string(v))
+
+	case map[string]interface{}:
+		for key, val := range v {
+			setParsedField(target, key, val)
+		}
+
+	default:
+		target["data"] = v
+	}
+
+	return nil
+}
+
+func mergeParsedData(target map[string]interface{}, parsed interface{}) {
+	switch data := parsed.(type) {
+	case map[string]interface{}:
+		for key, val := range data {
+			setParsedField(target, key, val)
+		}
+	default:
+		target["data"] = data
+	}
+}
+
+func setParsedField(target map[string]interface{}, key string, value interface{}) {
+	switch v := value.(type) {
+	case string:
+		if len(v) > 0 && (v[0] == '{' || v[0] == '[') {
+			var parsed interface{}
+			if err := json.Unmarshal([]byte(v), &parsed); err == nil {
+				if key == "timestamp" {
+					target[key] = normalizeTimestamp(parsed)
+				} else {
+					target[key] = parsed
+				}
+				return
+			}
+		}
+		if key == "timestamp" {
+			target[key] = normalizeTimestamp(v)
+		} else {
+			target[key] = v
+		}
+
+	case []byte:
+		setParsedField(target, key, string(v))
+
+	default:
+		if key == "timestamp" {
+			target[key] = normalizeTimestamp(v)
+		} else {
+			target[key] = v
+		}
+	}
+}
+
+func normalizeTimestamp(value interface{}) interface{} {
+	switch v := value.(type) {
+	case time.Time:
+		return v
+
+	case string:
+		trimmed := strings.TrimSpace(v)
+		if idx := strings.Index(trimmed, " m="); idx != -1 {
+			trimmed = strings.TrimSpace(trimmed[:idx])
+		}
+
+		layouts := []string{
+			time.RFC3339Nano,
+			time.RFC3339,
+			"2006-01-02 15:04:05.999999999 -0700 MST",
+			"2006-01-02 15:04:05.999999999 Z07:00",
+			"2006-01-02 15:04:05.999999999",
+		}
+
+		for _, layout := range layouts {
+			if parsed, err := time.Parse(layout, trimmed); err == nil {
+				return parsed
+			}
+		}
+
+		if unix, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
+			return time.Unix(unix, 0)
+		}
+		return trimmed
+
+	case int64:
+		return time.Unix(v, 0)
+
+	case int:
+		return time.Unix(int64(v), 0)
+
+	case float64:
+		return time.Unix(int64(v), 0)
+
+	case json.Number:
+		if unix, err := v.Int64(); err == nil {
+			return time.Unix(unix, 0)
+		}
+		if f, err := v.Float64(); err == nil {
+			return time.Unix(int64(f), 0)
+		}
+		return v
+
+	default:
+		return v
+	}
+}
+
+func toStringValue(value interface{}) (string, bool) {
+	switch v := value.(type) {
+	case string:
+		return v, true
+	case []byte:
+		return string(v), true
+	default:
+		return "", false
+	}
 }
 
 // Close closes the Redis connection
@@ -294,14 +498,19 @@ func (r *RedisStreamsClient) Ping() error {
 	return r.client.Ping(r.ctx).Err()
 }
 
+// GetClient returns the underlying Redis client
+func (r *RedisStreamsClient) GetClient() *redis.Client {
+	return r.client
+}
+
 // RedisStreamStats provides statistics about the Redis Stream
 type RedisStreamStats struct {
-	StreamName      string    `json:"stream_name"`
-	Length          int64     `json:"length"`
-	RadixTreeKeys   int64     `json:"radix_tree_keys"`
-	RadixTreeNodes  int64     `json:"radix_tree_nodes"`
-	Groups          int64     `json:"groups"`
-	LastGeneratedID string    `json:"last_generated_id"`
+	StreamName      string          `json:"stream_name"`
+	Length          int64           `json:"length"`
+	RadixTreeKeys   int64           `json:"radix_tree_keys"`
+	RadixTreeNodes  int64           `json:"radix_tree_nodes"`
+	Groups          int64           `json:"groups"`
+	LastGeneratedID string          `json:"last_generated_id"`
 	FirstEntry      *redis.XMessage `json:"first_entry,omitempty"`
 	LastEntry       *redis.XMessage `json:"last_entry,omitempty"`
 }
@@ -335,7 +544,7 @@ func (r *RedisStreamsClient) GetStats() (*RedisStreamStats, error) {
 // BatchAddMessages adds multiple messages to the stream in a pipeline
 func (r *RedisStreamsClient) BatchAddMessages(messages []StreamMessage) ([]string, error) {
 	pipe := r.client.Pipeline()
-	
+
 	var cmds []*redis.StringCmd
 	for _, msg := range messages {
 		fields := map[string]interface{}{
