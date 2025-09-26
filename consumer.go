@@ -12,6 +12,27 @@ import (
 	"github.com/parnexcodes/streamhouse/storage"
 )
 
+// Pool for reusing data maps to reduce allocations
+var dataMapPool = sync.Pool{
+	New: func() interface{} {
+		return make(map[string]interface{}, 16) // Pre-allocate with reasonable capacity
+	},
+}
+
+// getDataMap gets a map from the pool
+func getDataMap() map[string]interface{} {
+	return dataMapPool.Get().(map[string]interface{})
+}
+
+// putDataMap returns a map to the pool after clearing it
+func putDataMap(m map[string]interface{}) {
+	// Clear the map
+	for k := range m {
+		delete(m, k)
+	}
+	dataMapPool.Put(m)
+}
+
 // Consumer handles background processing of stream messages
 type Consumer struct {
 	client         *StreamHouseClient
@@ -202,13 +223,13 @@ func (c *Consumer) processBatch(messages []*storage.StreamMessage) {
 	startTime := time.Now()
 
 	// Group messages by data type
-	messagesByType := make(map[string][]*storage.StreamMessage)
+	messagesByType := make(map[string][]*storage.StreamMessage, len(messages))
 	for _, msg := range messages {
 		messagesByType[msg.DataType] = append(messagesByType[msg.DataType], msg)
 	}
 
 	var successCount, failCount int64
-	messageIDsByStream := make(map[string][]string)
+	messageIDsByStream := make(map[string][]string, len(messagesByType))
 
 	// Process each data type separately
 	for dataType, msgs := range messagesByType {
@@ -225,7 +246,11 @@ func (c *Consumer) processBatch(messages []*storage.StreamMessage) {
 
 			// Collect message IDs per stream for acknowledgment
 			streamName := c.client.getStreamKey(dataType)
-			messageIDsByStream[streamName] = append(messageIDsByStream[streamName], getMessageIDs(msgs)...)
+			ids := messageIDsByStream[streamName]
+			for _, msg := range msgs {
+				ids = append(ids, msg.ID)
+			}
+			messageIDsByStream[streamName] = ids
 		}
 	}
 
@@ -248,14 +273,6 @@ func (c *Consumer) processBatch(messages []*storage.StreamMessage) {
 	c.updateMetrics(successCount, failCount, time.Since(startTime))
 }
 
-func getMessageIDs(messages []*storage.StreamMessage) []string {
-	ids := make([]string, 0, len(messages))
-	for _, msg := range messages {
-		ids = append(ids, msg.ID)
-	}
-	return ids
-}
-
 // processMessagesByType processes messages of a specific data type
 func (c *Consumer) processMessagesByType(dataType string, messages []*storage.StreamMessage) error {
 	// Get schema for validation and conversion
@@ -264,8 +281,11 @@ func (c *Consumer) processMessagesByType(dataType string, messages []*storage.St
 		return fmt.Errorf("schema not found for data type: %s", dataType)
 	}
 
-	// Prepare data for ClickHouse insertion
-	var tableData []map[string]interface{}
+	// Prepare events for ClickHouse insertion
+	events := make([]*StreamEvent, 0, len(messages))
+	
+	// Single clock read for all messages in this batch
+	now := time.Now()
 
 	for _, msg := range messages {
 		// Use custom message handler if set
@@ -276,18 +296,25 @@ func (c *Consumer) processMessagesByType(dataType string, messages []*storage.St
 			continue
 		}
 
-		// Validate message data
-		if err := c.client.schemaRegistry.ValidateData(dataType, msg.Data); err != nil {
+		// Use compiled validator for faster validation and conversion
+		validator, err := c.client.schemaRegistry.GetCompiledValidator(dataType)
+		if err != nil {
+			return fmt.Errorf("compiled validator not found for data type: %s", dataType)
+		}
+
+		// Validate and convert data in a single pass
+		convertedData, err := validator.ValidateAndConvert(msg.Data)
+		if err != nil {
 			return fmt.Errorf("data validation failed: %w", err)
 		}
 
 		// Normalize data for ClickHouse insertion
-		row, err := c.normalizeClickHouseRow(schema, dataType, msg)
+		event, err := c.normalizeClickHouseEventOptimized(schema, dataType, msg, convertedData, now)
 		if err != nil {
 			return fmt.Errorf("failed to normalize data for ClickHouse: %w", err)
 		}
 
-		tableData = append(tableData, row)
+		events = append(events, event)
 	}
 
 	// Skip ClickHouse insertion if using custom handler
@@ -297,75 +324,74 @@ func (c *Consumer) processMessagesByType(dataType string, messages []*storage.St
 
 	// Insert data into ClickHouse
 	tableName := c.getTableName(dataType)
-	if err := c.clickHouse.InsertData(tableName, tableData); err != nil {
+	if err := c.clickHouse.InsertBatch(tableName, events); err != nil {
 		return fmt.Errorf("failed to insert data into ClickHouse: %w", err)
 	}
 
 	return nil
 }
 
-func (c *Consumer) normalizeClickHouseRow(schema *DataSchema, dataType string, msg *storage.StreamMessage) (map[string]interface{}, error) {
-	row := make(map[string]interface{}, len(schema.Fields)+1)
+func (c *Consumer) normalizeClickHouseEventOptimized(schema *DataSchema, dataType string, msg *storage.StreamMessage, convertedData map[string]interface{}, defaultTimestamp time.Time) (*StreamEvent, error) {
+	data := getDataMap()
+	defer putDataMap(data)
 
-	for fieldName, fieldConfig := range schema.Fields {
-		rawValue, exists := msg.Data[fieldName]
-		if !exists {
-			if fieldConfig.Default == nil {
-				continue
-			}
-			rawValue = fieldConfig.Default
-		}
+	// Copy converted data directly (no need for field-by-field conversion)
+	for k, v := range convertedData {
+		data[k] = v
+	}
 
-		convertedValue, err := c.client.schemaRegistry.ConvertValue(rawValue, fieldConfig.Type)
-		if err != nil {
-			return nil, fmt.Errorf("field %s conversion failed: %w", fieldName, err)
-		}
+	if _, ok := data["id"]; !ok {
+		data["id"] = msg.ID
+	}
 
-		switch fieldConfig.Type {
-		case FieldTypeJSON:
-			if convertedValue == nil {
-				continue
+	timestamp := defaultTimestamp
+	if ts, ok := data["timestamp"]; ok {
+		switch v := ts.(type) {
+		case time.Time:
+			timestamp = v
+		case string:
+			if parsed, err := time.Parse(time.RFC3339Nano, v); err == nil {
+				timestamp = parsed
+			} else if parsed, err := time.Parse(time.RFC3339, v); err == nil {
+				timestamp = parsed
+			} else {
+				timestamp = defaultTimestamp
 			}
-			if str, ok := convertedValue.(string); ok {
-				row[fieldName] = str
-				break
-			}
-			jsonBytes, err := json.Marshal(convertedValue)
-			if err != nil {
-				return nil, fmt.Errorf("field %s json marshal failed: %w", fieldName, err)
-			}
-			row[fieldName] = string(jsonBytes)
-
-		case FieldTypeDatetime:
-			switch v := convertedValue.(type) {
-			case time.Time:
-				row[fieldName] = v
-			default:
-				row[fieldName] = convertedValue
-			}
-
 		default:
-			row[fieldName] = convertedValue
-		}
-	}
-
-	if _, ok := row["id"]; !ok {
-		row["id"] = msg.ID
-	}
-
-	if ts, ok := row["timestamp"]; ok {
-		if t, ok := ts.(time.Time); ok {
-			row["timestamp"] = t
-		} else {
-			row["timestamp"] = time.Now()
+			timestamp = defaultTimestamp
 		}
 	} else {
-		row["timestamp"] = time.Now()
+		timestamp = defaultTimestamp
+		data["timestamp"] = timestamp
 	}
 
-	row["data_type"] = dataType
+	data["data_type"] = dataType
 
-	return row, nil
+	// Use pre-marshaled metadata if available, otherwise copy by reference
+	var metadataJSON string
+	if msg.MetadataJSON != "" {
+		metadataJSON = msg.MetadataJSON
+	} else if len(msg.Metadata) > 0 {
+		// Only marshal if we don't have pre-marshaled version
+		if jsonBytes, err := json.Marshal(msg.Metadata); err == nil {
+			metadataJSON = string(jsonBytes)
+		}
+	}
+
+	// Create a copy of the data map for the event since we're returning the pooled map
+	eventData := make(map[string]interface{}, len(data))
+	for k, v := range data {
+		eventData[k] = v
+	}
+
+	return &StreamEvent{
+		ID:           msg.ID,
+		Schema:       dataType,
+		Data:         eventData,
+		Timestamp:    timestamp,
+		Metadata:     msg.Metadata, // Copy by reference
+		MetadataJSON: metadataJSON,  // Use pre-marshaled or marshal once
+	}, nil
 }
 
 // handleFailedMessage handles a message that failed processing

@@ -548,23 +548,106 @@ func TestIntegration(t *testing.T) {
 }
 ```
 
-### 3. Load Testing
+### 3. Load & Benchmark Testing
 
-```go
-func BenchmarkStreaming(b *testing.B) {
-    client := setupTestClient(b)
-    
-    b.ResetTimer()
-    b.RunParallel(func(pb *testing.PB) {
-        for pb.Next() {
-            client.StreamAsync("test.event", map[string]interface{}{
-                "id":        uuid.New().String(),
-                "timestamp": time.Now(),
-            })
-        }
-    })
-}
+StreamHouse includes comprehensive benchmarks to measure performance across different components. All benchmarks use in-memory Redis (miniredis) and stub ClickHouse interfaces, so they run without external dependencies.
+
+#### Available Benchmarks
+
+**Client Streaming Performance:**
+- `BenchmarkStream` - Measures synchronous streaming performance
+- `BenchmarkStreamAsync` - Measures asynchronous streaming performance
+
+**Consumer Processing:**
+- `BenchmarkProcessBatch` - Measures batch processing performance in consumers
+
+**Storage Layer:**
+- `BenchmarkConvertEvent` - Measures ClickHouse event conversion performance
+
+#### Running Benchmarks
+
+**Run all benchmarks:**
+```bash
+go test ./... -bench . -benchmem
 ```
+
+**Run specific benchmark categories:**
+```bash
+# Client streaming benchmarks
+go test ./... -bench='BenchmarkStream(Async)?' -benchmem
+
+# Consumer processing benchmarks  
+go test ./... -bench='BenchmarkProcessBatch' -benchmem
+
+# Storage conversion benchmarks
+go test ./storage -bench='BenchmarkConvertEvent' -benchmem
+```
+
+**Run benchmarks with specific parameters:**
+```bash
+# Longer runtime for more stable results
+go test ./... -bench . -benchtime=5s -benchmem
+
+# Run benchmarks multiple times for statistical significance
+go test ./... -bench . -count=3 -benchmem
+
+# Run with CPU profiling
+go test ./... -bench . -cpuprofile=cpu.prof -benchmem
+
+# Run with memory profiling
+go test ./... -bench . -memprofile=mem.prof -benchmem
+
+# Run with both CPU and memory profiling
+go test ./... -bench . -cpuprofile=cpu.prof -memprofile=mem.prof -benchmem
+```
+
+#### Benchmark Parameters Explained
+
+- `-bench .` - Run all benchmarks (use specific pattern like `BenchmarkStream` for targeted runs)
+- `-benchmem` - Include memory allocation statistics in results
+- `-benchtime=5s` - Run each benchmark for 5 seconds (default is 1 second)
+- `-count=3` - Run each benchmark 3 times for statistical significance
+- `-cpuprofile=cpu.prof` - Generate CPU profile for performance analysis
+- `-memprofile=mem.prof` - Generate memory profile for allocation analysis
+- `-timeout=10m` - Set timeout for benchmark runs (useful for long-running benchmarks)
+
+#### Interpreting Results
+
+**Example benchmark output:**
+```
+BenchmarkStream-8             10000    123456 ns/op    2048 B/op    32 allocs/op
+BenchmarkStreamAsync-8        50000     45678 ns/op    1024 B/op    16 allocs/op
+BenchmarkProcessBatch-8        1000   1234567 ns/op    8192 B/op   128 allocs/op
+```
+
+**Understanding the metrics:**
+- `10000` - Number of iterations completed
+- `123456 ns/op` - Nanoseconds per operation (lower is better)
+- `2048 B/op` - Bytes allocated per operation (lower is better)
+- `32 allocs/op` - Number of memory allocations per operation (lower is better)
+
+#### Performance Optimization Tips
+
+**For better benchmark results:**
+- Run on an otherwise idle machine to minimize noise
+- Use `-benchtime=5s` or longer for more stable results
+- Run multiple times with `-count=3` to identify outliers
+- Use profiling flags to identify bottlenecks
+
+**For CI/CD integration:**
+```bash
+# Add to your CI pipeline
+go test ./... -bench . -benchtime=3s -benchmem -count=1 > benchmark_results.txt
+
+# Or create a dedicated benchmark target in Makefile
+benchmark:
+	go test ./... -bench . -benchtime=5s -benchmem -count=3
+```
+
+**Automated regression detection:**
+- Store benchmark results as artifacts in CI
+- Compare results between commits to detect performance regressions
+- Set up alerts for significant performance changes (>10% degradation)
 
 ## Troubleshooting
 

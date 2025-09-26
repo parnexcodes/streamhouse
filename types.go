@@ -61,11 +61,12 @@ type DataBuilderInterface interface {
 
 // StreamEvent represents a data event in the stream
 type StreamEvent struct {
-	ID        string                 `json:"id"`
-	Schema    string                 `json:"schema"`
-	Data      map[string]interface{} `json:"data"`
-	Timestamp time.Time              `json:"timestamp"`
-	Metadata  map[string]interface{} `json:"metadata"`
+	ID           string                 `json:"id"`
+	Schema       string                 `json:"schema"`
+	Data         map[string]interface{} `json:"data"`
+	Timestamp    time.Time              `json:"timestamp"`
+	Metadata     map[string]interface{} `json:"metadata"`
+	MetadataJSON string                 `json:"metadata_json,omitempty"` // Pre-marshaled metadata for performance
 }
 
 // ConsumerGroup represents a consumer group configuration

@@ -6,18 +6,192 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
+// CompiledValidator represents a pre-compiled validator for a schema
+type CompiledValidator struct {
+	schema    *DataSchema
+	fieldKeys []string // Pre-computed field keys for iteration
+}
+
+// ValidateAndConvert validates and converts data in a single pass
+func (cv *CompiledValidator) ValidateAndConvert(data map[string]interface{}) (map[string]interface{}, error) {
+	result := make(map[string]interface{}, len(cv.schema.Fields))
+	
+	// Check required fields and convert values
+	for _, fieldName := range cv.fieldKeys {
+		fieldConfig := cv.schema.Fields[fieldName]
+		value, exists := data[fieldName]
+
+		if !exists {
+			if fieldConfig.Required {
+				return nil, NewValidationError(fieldName, nil, "required field missing")
+			}
+			// Set default value if provided
+			if fieldConfig.Default != nil {
+				convertedValue, err := convertValueDirect(fieldConfig.Default, fieldConfig.Type)
+				if err != nil {
+					return nil, fmt.Errorf("field %s default conversion failed: %w", fieldName, err)
+				}
+				result[fieldName] = convertedValue
+			}
+			continue
+		}
+
+		// Validate and convert field value
+		convertedValue, err := convertValueDirect(value, fieldConfig.Type)
+		if err != nil {
+			return nil, NewValidationError(fieldName, value, err.Error())
+		}
+
+		// Run custom validator if provided
+		if fieldConfig.Validator != nil {
+			if err := fieldConfig.Validator(convertedValue); err != nil {
+				return nil, NewValidationError(fieldName, value, fmt.Sprintf("custom validation failed: %v", err))
+			}
+		}
+
+		result[fieldName] = convertedValue
+	}
+
+	return result, nil
+}
+
+// convertValueDirect performs direct conversion without interface overhead
+func convertValueDirect(value interface{}, fieldType FieldType) (interface{}, error) {
+	if value == nil {
+		return nil, nil
+	}
+
+	switch fieldType {
+	case FieldTypeString:
+		switch v := value.(type) {
+		case string:
+			return v, nil
+		case []byte:
+			return string(v), nil
+		default:
+			return fmt.Sprintf("%v", v), nil
+		}
+
+	case FieldTypeInt:
+		switch v := value.(type) {
+		case int:
+			return int64(v), nil
+		case int8:
+			return int64(v), nil
+		case int16:
+			return int64(v), nil
+		case int32:
+			return int64(v), nil
+		case int64:
+			return v, nil
+		case uint:
+			return int64(v), nil
+		case uint8:
+			return int64(v), nil
+		case uint16:
+			return int64(v), nil
+		case uint32:
+			return int64(v), nil
+		case uint64:
+			return int64(v), nil
+		case float32:
+			return int64(v), nil
+		case float64:
+			return int64(v), nil
+		case string:
+			return strconv.ParseInt(v, 10, 64)
+		default:
+			return nil, fmt.Errorf("cannot convert %T to int", value)
+		}
+
+	case FieldTypeFloat:
+		switch v := value.(type) {
+		case float32:
+			return float64(v), nil
+		case float64:
+			return v, nil
+		case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+			return float64(reflect.ValueOf(v).Convert(reflect.TypeOf(float64(0))).Float()), nil
+		case string:
+			return strconv.ParseFloat(v, 64)
+		default:
+			return nil, fmt.Errorf("cannot convert %T to float", value)
+		}
+
+	case FieldTypeBool:
+		switch v := value.(type) {
+		case bool:
+			return v, nil
+		case string:
+			return strconv.ParseBool(v)
+		case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+			return reflect.ValueOf(v).Convert(reflect.TypeOf(int64(0))).Int() != 0, nil
+		default:
+			return nil, fmt.Errorf("cannot convert %T to bool", value)
+		}
+
+	case FieldTypeDatetime:
+		switch v := value.(type) {
+		case time.Time:
+			return v, nil
+		case string:
+			// Try multiple time formats
+			formats := []string{
+				time.RFC3339,
+				time.RFC3339Nano,
+				"2006-01-02T15:04:05",
+				"2006-01-02 15:04:05",
+				"2006-01-02",
+			}
+			
+			for _, format := range formats {
+				if t, err := time.Parse(format, v); err == nil {
+					return t, nil
+				}
+			}
+			return nil, fmt.Errorf("cannot parse datetime: %s", v)
+		case int64:
+			// Unix timestamp
+			return time.Unix(v, 0), nil
+		default:
+			return nil, fmt.Errorf("cannot convert %T to datetime", value)
+		}
+
+	case FieldTypeJSON:
+		// Fast-path: if it's already a string, assume it's valid JSON
+		if str, ok := value.(string); ok {
+			return str, nil
+		}
+		
+		// Convert to JSON string for non-string values
+		jsonBytes, err := json.Marshal(value)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal JSON: %w", err)
+		}
+		
+		return string(jsonBytes), nil
+
+	default:
+		return nil, fmt.Errorf("unknown field type: %s", fieldType)
+	}
+}
+
 // SchemaRegistry manages registered schemas
 type SchemaRegistry struct {
-	schemas map[string]*DataSchema
+	schemas           map[string]*DataSchema
+	compiledValidators map[string]*CompiledValidator
+	mu                sync.RWMutex
 }
 
 // NewSchemaRegistry creates a new schema registry
 func NewSchemaRegistry() *SchemaRegistry {
 	return &SchemaRegistry{
-		schemas: make(map[string]*DataSchema),
+		schemas:           make(map[string]*DataSchema),
+		compiledValidators: make(map[string]*CompiledValidator),
 	}
 }
 
@@ -35,6 +209,9 @@ func (sr *SchemaRegistry) Register(schema *DataSchema) error {
 		return NewSchemaError(schema.Name, "", err)
 	}
 
+	sr.mu.Lock()
+	defer sr.mu.Unlock()
+
 	if _, exists := sr.schemas[schema.Name]; exists {
 		return NewSchemaError(schema.Name, "", ErrSchemaAlreadyExists)
 	}
@@ -43,11 +220,26 @@ func (sr *SchemaRegistry) Register(schema *DataSchema) error {
 	sr.addDefaultFields(schema)
 
 	sr.schemas[schema.Name] = schema
+	
+	// Create compiled validator
+	fieldKeys := make([]string, 0, len(schema.Fields))
+	for fieldName := range schema.Fields {
+		fieldKeys = append(fieldKeys, fieldName)
+	}
+	
+	sr.compiledValidators[schema.Name] = &CompiledValidator{
+		schema:    schema,
+		fieldKeys: fieldKeys,
+	}
+	
 	return nil
 }
 
 // Get retrieves a schema by name
 func (sr *SchemaRegistry) Get(name string) (*DataSchema, error) {
+	sr.mu.RLock()
+	defer sr.mu.RUnlock()
+	
 	schema, exists := sr.schemas[name]
 	if !exists {
 		return nil, NewSchemaError(name, "", ErrSchemaNotFound)
@@ -55,8 +247,23 @@ func (sr *SchemaRegistry) Get(name string) (*DataSchema, error) {
 	return schema, nil
 }
 
+// GetCompiledValidator retrieves a compiled validator by schema name
+func (sr *SchemaRegistry) GetCompiledValidator(name string) (*CompiledValidator, error) {
+	sr.mu.RLock()
+	defer sr.mu.RUnlock()
+	
+	validator, exists := sr.compiledValidators[name]
+	if !exists {
+		return nil, NewSchemaError(name, "", ErrSchemaNotFound)
+	}
+	return validator, nil
+}
+
 // List returns all registered schema names
 func (sr *SchemaRegistry) List() []string {
+	sr.mu.RLock()
+	defer sr.mu.RUnlock()
+	
 	names := make([]string, 0, len(sr.schemas))
 	for name := range sr.schemas {
 		names = append(names, name)
@@ -66,10 +273,14 @@ func (sr *SchemaRegistry) List() []string {
 
 // Unregister removes a schema
 func (sr *SchemaRegistry) Unregister(name string) error {
+	sr.mu.Lock()
+	defer sr.mu.Unlock()
+	
 	if _, exists := sr.schemas[name]; !exists {
 		return NewSchemaError(name, "", ErrSchemaNotFound)
 	}
 	delete(sr.schemas, name)
+	delete(sr.compiledValidators, name)
 	return nil
 }
 
@@ -300,11 +511,31 @@ func (sr *SchemaRegistry) ConvertValue(value interface{}, fieldType FieldType) (
 		return sr.convertToDatetime(value)
 
 	case FieldTypeJSON:
-		return value, nil // JSON can be any type
+		return sr.convertToJSON(value)
 
 	default:
 		return nil, fmt.Errorf("unknown field type: %s", fieldType)
 	}
+}
+
+// convertToJSON handles JSON field conversion with fast-path for strings
+func (sr *SchemaRegistry) convertToJSON(value interface{}) (interface{}, error) {
+	if value == nil {
+		return nil, nil
+	}
+	
+	// Fast-path: if it's already a string, assume it's valid JSON
+	if str, ok := value.(string); ok {
+		return str, nil
+	}
+	
+	// Convert to JSON string for non-string values
+	jsonBytes, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal JSON: %w", err)
+	}
+	
+	return string(jsonBytes), nil
 }
 
 // Helper conversion functions

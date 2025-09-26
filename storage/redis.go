@@ -55,10 +55,11 @@ func NewRedisStreamsClient(addr, password string, db int, streamName string) (*R
 
 // StreamMessage represents a message in Redis Streams
 type StreamMessage struct {
-	ID       string                 `json:"id"`
-	DataType string                 `json:"data_type"`
-	Data     map[string]interface{} `json:"data"`
-	Metadata map[string]interface{} `json:"metadata,omitempty"`
+	ID           string                 `json:"id"`
+	DataType     string                 `json:"data_type"`
+	Data         map[string]interface{} `json:"data"`
+	Metadata     map[string]interface{} `json:"metadata,omitempty"`
+	MetadataJSON string                 `json:"metadata_json,omitempty"` // Pre-marshaled metadata for performance
 }
 
 // AddMessage adds a message to the Redis Stream
@@ -325,6 +326,9 @@ func (r *RedisStreamsClient) parseMessage(msg redis.XMessage) (StreamMessage, er
 			if !ok || metadataStr == "" {
 				continue
 			}
+
+			// Store both the raw JSON string and parsed metadata
+			streamMsg.MetadataJSON = metadataStr
 
 			var metadata map[string]interface{}
 			if err := json.Unmarshal([]byte(metadataStr), &metadata); err != nil {

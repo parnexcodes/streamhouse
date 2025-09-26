@@ -203,6 +203,20 @@ func (c *StreamHouseClient) Stream(dataType string, data map[string]interface{})
 		Metadata:  make(map[string]interface{}),
 	}
 
+	// Pre-marshal metadata for performance
+	if len(event.Metadata) > 0 {
+		if metadataJSON, err := json.Marshal(event.Metadata); err == nil {
+			event.MetadataJSON = string(metadataJSON)
+		}
+	}
+
+	// Pre-marshal metadata for performance
+	if len(event.Metadata) > 0 {
+		if metadataJSON, err := json.Marshal(event.Metadata); err == nil {
+			event.MetadataJSON = string(metadataJSON)
+		}
+	}
+
 	// Add to Redis stream
 	streamKey := c.getStreamKey(dataType)
 	fields := c.eventToRedisFields(event)
@@ -463,8 +477,10 @@ func (c *StreamHouseClient) eventToRedisFields(event *StreamEvent) map[string]in
 		fields["data"] = "{}"
 	}
 
-	// Store metadata as JSON string (expected by parseMessage)
-	if len(event.Metadata) > 0 {
+	// Use pre-marshaled metadata if available, otherwise marshal on demand
+	if event.MetadataJSON != "" {
+		fields["metadata"] = event.MetadataJSON
+	} else if len(event.Metadata) > 0 {
 		if metadataJSON, err := json.Marshal(event.Metadata); err == nil {
 			fields["metadata"] = string(metadataJSON)
 		} else {
