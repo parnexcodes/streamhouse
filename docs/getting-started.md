@@ -33,7 +33,8 @@ func main() {
     // Create configuration
     config := streamhouse.Config{
         Redis: streamhouse.RedisConfig{
-            Addr: "localhost:6379",
+            Host: "localhost",
+            Port: 6379,
         },
         ClickHouse: streamhouse.ClickHouseConfig{
             Host:     "localhost",
@@ -151,7 +152,8 @@ Create a `config.yaml` file:
 
 ```yaml
 redis:
-  addr: "localhost:6379"
+  host: "localhost"
+  port: 6379
   password: ""
   db: 0
   pool_size: 10

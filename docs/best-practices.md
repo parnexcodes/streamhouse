@@ -405,7 +405,8 @@ services:
   streamhouse-app:
     build: .
     environment:
-      - REDIS_ADDR=redis:6379
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
       - CLICKHOUSE_HOST=clickhouse
     depends_on:
       - redis
@@ -451,8 +452,10 @@ spec:
       - name: consumer
         image: streamhouse-app:latest
         env:
-        - name: REDIS_ADDR
-          value: "redis-service:6379"
+        - name: REDIS_HOST
+          value: "redis-service"
+        - name: REDIS_PORT
+          value: "6379"
         - name: CLICKHOUSE_HOST
           value: "clickhouse-service"
         - name: CONSUMER_WORKERS

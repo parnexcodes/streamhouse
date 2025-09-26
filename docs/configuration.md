@@ -9,7 +9,8 @@ StreamHouse provides flexible configuration options through code, configuration 
 ```go
 config := streamhouse.Config{
     Redis: streamhouse.RedisConfig{
-        Addr:         "localhost:6379",
+        Host:         "localhost",
+        Port:         6379,
         Password:     "",
         DB:           0,
         PoolSize:     10,
@@ -43,7 +44,8 @@ Create a `config.yaml` file:
 
 ```yaml
 redis:
-  addr: "localhost:6379"
+  host: "localhost"
+  port: 6379
   password: ""
   db: 0
   pool_size: 10
@@ -142,7 +144,8 @@ If both host:port format and separate port variables are provided, the separate 
 
 ```go
 type RedisConfig struct {
-    Addr         string        // Redis server address
+    Host         string        // Redis server host
+    Port         int           // Redis server port
     Password     string        // Redis password
     DB           int           // Redis database number
     PoolSize     int           // Connection pool size
@@ -159,7 +162,8 @@ type RedisConfig struct {
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `Addr` | `localhost:6379` | Redis server address |
+| `Host` | `localhost` | Redis server host |
+| `Port` | `6379` | Redis server port |
 | `Password` | `""` | Redis password (empty for no auth) |
 | `DB` | `0` | Redis database number |
 | `PoolSize` | `10` | Maximum number of connections |
@@ -308,7 +312,8 @@ logging:
 ```yaml
 # config.prod.yaml
 redis:
-  addr: "redis-cluster:6379"
+  host: "redis-cluster"
+  port: 6379
   password: "${REDIS_PASSWORD}"
   pool_size: 50
   min_idle_conns: 10
